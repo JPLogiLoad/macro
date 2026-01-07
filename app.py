@@ -15,7 +15,8 @@ uploaded_file = st.file_uploader("Selecione o arquivo Excel", type=["xlsx", "xls
 
 if uploaded_file is not None:
     df = None
-    # --- BLOCO DE LEITURA BLINDADA (FINAL) ---
+    
+    # --- BLOCO DE LEITURA BLINDADA (ESTRATÉGIA MANUAL) ---
     try:
         # TENTATIVA 1: Leitura Padrão (Excel moderno .xlsx)
         df = pd.read_excel(uploaded_file, header=None)
@@ -25,27 +26,32 @@ if uploaded_file is not None:
             uploaded_file.seek(0) 
             df = pd.read_excel(uploaded_file, header=None, engine='xlrd')
         except Exception:
-            # TENTATIVA 3: Arquivo HTML/XML "disfarçado"
-            # Tenta UTF-8 primeiro, depois Latin-1 (para corrigir o UnicodeDecodeError)
+            # TENTATIVA 3: Arquivo HTML/XML "disfarçado" (A Solução Definitiva)
+            # Em vez de pedir pro Pandas ler o arquivo, nós lemos os BYTES e transformamos em TEXTO
             try:
                 uploaded_file.seek(0)
-                dfs_html = pd.read_html(uploaded_file, header=None)
-            except UnicodeDecodeError:
-                # CORREÇÃO DO ERRO DE CARACTERES ESTRANHOS
-                uploaded_file.seek(0)
-                dfs_html = pd.read_html(uploaded_file, header=None, encoding='latin-1')
-            except Exception:
-                # Última chance: cp1252 (outro padrão comum no Windows)
-                try:
-                    uploaded_file.seek(0)
-                    dfs_html = pd.read_html(uploaded_file, header=None, encoding='cp1252')
-                except:
-                    dfs_html = None
+                bytes_data = uploaded_file.getvalue()
+                
+                html_text = None
+                # Tenta decodificar manualmente em ordem de probabilidade
+                for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+                    try:
+                        html_text = bytes_data.decode(encoding)
+                        break # Se funcionar, para o loop
+                    except UnicodeDecodeError:
+                        continue # Se der erro, tenta o próximo
+                
+                if html_text:
+                    # Passa o texto limpo para o Pandas (usando StringIO para simular um arquivo)
+                    dfs_html = pd.read_html(io.StringIO(html_text), header=None)
+                    if dfs_html:
+                        df = dfs_html[0]
+                
+                if df is None:
+                    raise Exception("Nenhuma tabela encontrada no HTML.")
 
-            if dfs_html:
-                df = dfs_html[0]
-            else:
-                st.error("Erro fatal: O arquivo não é um Excel válido e nem uma tabela HTML legível.")
+            except Exception as e:
+                st.error(f"Erro fatal: O arquivo não pôde ser lido. Detalhes: {e}")
                 st.stop()
     
     # Se chegou aqui, o df existe. Vamos processar.
@@ -65,6 +71,7 @@ if uploaded_file is not None:
             # Col I (UF) = 8    | Col K (Transp) = 10
             
             # 1. Datas (Coluna L / Index 11)
+            # Converte para data, erros viram NaT
             df[11] = pd.to_datetime(df[11], errors='coerce')
             mascara_data = (df[11] >= inicio_plantao) & (df[11] <= fim_plantao)
             
@@ -133,4 +140,4 @@ if uploaded_file is not None:
 
         except Exception as e:
             st.error(f"Erro durante o processamento dos dados: {e}")
-            st.write("Dica: Verifique se as colunas da planilha mudaram de posição.")
+            st.warning("Dica: Verifique se a estrutura da planilha (ordem das colunas) mudou.")
