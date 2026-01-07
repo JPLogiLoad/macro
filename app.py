@@ -2,21 +2,21 @@ import pandas as pd
 from datetime import datetime, timedelta, time
 import streamlit as st
 import io
+import csv
 
 # Configuração da Página
 st.set_page_config(page_title="Macro Cargas", page_icon="🚛", layout="centered")
 
-# Título da Aplicação
 st.title("🚛 Processador de Cargas - Critério Melhorado")
 st.markdown("Faça upload da planilha para filtrar as cargas e formatar automaticamente.")
 
 # 1. Upload do Arquivo
-uploaded_file = st.file_uploader("Selecione o arquivo Excel", type=["xlsx", "xls", "xlsm"])
+uploaded_file = st.file_uploader("Selecione o arquivo Excel", type=["xlsx", "xls", "xlsm", "csv", "txt"])
 
 if uploaded_file is not None:
     df = None
     
-    # --- BLOCO DE LEITURA BLINDADA (ESTRATÉGIA MANUAL) ---
+    # --- BLOCO DE LEITURA BLINDADA (VERSÃO FINAL 4.0) ---
     try:
         # TENTATIVA 1: Leitura Padrão (Excel moderno .xlsx)
         df = pd.read_excel(uploaded_file, header=None)
@@ -26,34 +26,47 @@ if uploaded_file is not None:
             uploaded_file.seek(0) 
             df = pd.read_excel(uploaded_file, header=None, engine='xlrd')
         except Exception:
-            # TENTATIVA 3: Arquivo HTML/XML "disfarçado" (A Solução Definitiva)
-            # Em vez de pedir pro Pandas ler o arquivo, nós lemos os BYTES e transformamos em TEXTO
             try:
+                # TENTATIVA 3: Arquivo HTML "disfarçado"
                 uploaded_file.seek(0)
                 bytes_data = uploaded_file.getvalue()
                 
+                # Decodifica manualmente
                 html_text = None
-                # Tenta decodificar manualmente em ordem de probabilidade
+                encoding_detected = 'utf-8'
                 for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
                     try:
                         html_text = bytes_data.decode(encoding)
-                        break # Se funcionar, para o loop
+                        encoding_detected = encoding
+                        break 
                     except UnicodeDecodeError:
-                        continue # Se der erro, tenta o próximo
+                        continue
                 
                 if html_text:
-                    # Passa o texto limpo para o Pandas (usando StringIO para simular um arquivo)
+                    # Tenta ler HTML
                     dfs_html = pd.read_html(io.StringIO(html_text), header=None)
                     if dfs_html:
                         df = dfs_html[0]
-                
-                if df is None:
-                    raise Exception("Nenhuma tabela encontrada no HTML.")
+                    else:
+                        raise Exception("HTML sem tabelas") # Força ir para a próxima tentativa
+            
+            except Exception:
+                # TENTATIVA 4: Arquivo de TEXTO/CSV disfarçado (Separado por TAB ou Ponto e Vírgula)
+                try:
+                    uploaded_file.seek(0)
+                    # Tenta ler como CSV separado por TABULAÇÃO (muito comum em relatórios .xls falsos)
+                    # Usamos 'python' engine para ser mais flexível
+                    df = pd.read_csv(uploaded_file, sep='\t', header=None, encoding='latin-1', engine='python')
+                    
+                    # Se criou apenas 1 coluna, provavelmente não era TAB, tenta PONTO E VÍRGULA
+                    if df.shape[1] < 2:
+                        uploaded_file.seek(0)
+                        df = pd.read_csv(uploaded_file, sep=';', header=None, encoding='latin-1', engine='python')
+                        
+                except Exception as e:
+                    st.error(f"Erro fatal: O arquivo não pôde ser lido de nenhuma forma conhecida. Detalhes: {e}")
+                    st.stop()
 
-            except Exception as e:
-                st.error(f"Erro fatal: O arquivo não pôde ser lido. Detalhes: {e}")
-                st.stop()
-    
     # Se chegou aqui, o df existe. Vamos processar.
     if df is not None:
         try:
@@ -70,8 +83,12 @@ if uploaded_file is not None:
             # Col L (Data) = 11 | Col E (Local) = 4 | Col P (Status) = 15 
             # Col I (UF) = 8    | Col K (Transp) = 10
             
+            # Verifica se o DF tem colunas suficientes antes de filtrar
+            if df.shape[1] < 16:
+                st.error(f"Erro: A planilha lida tem apenas {df.shape[1]} colunas, mas o código precisa de pelo menos 16 (até a coluna P). Verifique se o arquivo está correto.")
+                st.stop()
+
             # 1. Datas (Coluna L / Index 11)
-            # Converte para data, erros viram NaT
             df[11] = pd.to_datetime(df[11], errors='coerce')
             mascara_data = (df[11] >= inicio_plantao) & (df[11] <= fim_plantao)
             
@@ -84,7 +101,6 @@ if uploaded_file is not None:
             mascara_status = df[15].astype(str).str.strip().str.upper().isin(status_validos)
             
             # 4. Exceção MG + SILVER (Coluna I / Index 8 e P / Index 15)
-            # Excluir se for MG E Silver (usa ~ para inverter e manter o resto)
             mascara_mg_silver = ~((df[8].astype(str).str.strip().str.upper() == "MG") & 
                                   (df[15].astype(str).str.strip().str.upper() == "SILVER"))
             
@@ -99,7 +115,6 @@ if uploaded_file is not None:
             # Indices para remover: V(21), U(20)... A(0)
             cols_to_drop = [21, 20, 19, 18, 17, 16, 13, 12, 9, 6, 5, 4, 3, 2, 0]
             
-            # Remove apenas colunas que existem no dataframe
             cols_existentes = [c for c in cols_to_drop if c in df_filtrado.columns]
             df_final = df_filtrado.drop(columns=cols_existentes)
 
@@ -111,21 +126,17 @@ if uploaded_file is not None:
                 workbook = writer.book
                 worksheet = writer.sheets['Sheet1']
                 
-                # Formatos
                 formato_moeda = workbook.add_format({'num_format': 'R$ #,##0.00', 'border': 1})
                 formato_bordas = workbook.add_format({'border': 1})
                 
-                # Aplica bordas em tudo se houver dados
                 if len(df_final) > 0:
                     worksheet.conditional_format(0, 0, len(df_final)-1, len(df_final.columns)-1, 
                                                 {'type': 'no_blanks', 'format': formato_bordas})
 
-                # Formato de Moeda na nova coluna F (Index 5)
                 # A Coluna O (15) original vira a F (5) após os cortes
                 if len(df_final.columns) > 5:
                     worksheet.set_column(5, 5, 15, formato_moeda) 
                 
-                # Ajuste de largura geral
                 worksheet.set_column(0, 4, 12)
                 worksheet.set_column(6, 20, 12)
             
@@ -139,5 +150,4 @@ if uploaded_file is not None:
             )
 
         except Exception as e:
-            st.error(f"Erro durante o processamento dos dados: {e}")
-            st.warning("Dica: Verifique se a estrutura da planilha (ordem das colunas) mudou.")
+            st.error(f"Erro durante o processamento: {e}")
