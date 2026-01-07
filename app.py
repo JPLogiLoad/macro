@@ -1,202 +1,191 @@
 import pandas as pd
 import streamlit as st
 import io
+import string
 from datetime import datetime, timedelta, time
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Processador de Cargas Pro", page_icon="🚀", layout="wide")
 
-# --- FUNÇÕES AUXILIARES (ENGINEERING) ---
+# --- FUNÇÕES AUXILIARES ---
 
 def carregar_dados_blindado(uploaded_file):
-    """
-    Tenta ler o arquivo de todas as formas possíveis (XLS, XLSX, HTML, CSV, TXT).
-    Retorna um DataFrame limpo ou None se falhar.
-    """
-    df = None
+    """Lê Excel, HTML ou CSV tentando várias estratégias."""
     bytes_data = uploaded_file.getvalue()
     
-    # Lista de estratégias de leitura
-    estrategias = [
-        # 1. Excel Padrão
-        lambda: pd.read_excel(uploaded_file, header=None),
-        # 2. Excel Antigo (xlrd)
-        lambda: pd.read_excel(uploaded_file, header=None, engine='xlrd'),
-        # 3. HTML (detectando encoding automaticamente)
-        lambda: pd.read_html(io.StringIO(bytes_data.decode('utf-8')), header=None)[0],
-        lambda: pd.read_html(io.StringIO(bytes_data.decode('latin-1')), header=None)[0],
-        lambda: pd.read_html(io.StringIO(bytes_data.decode('cp1252')), header=None)[0],
-        # 4. CSV/Texto (Tabulação ou Ponto e Vírgula)
-        lambda: pd.read_csv(io.StringIO(bytes_data.decode('latin-1')), sep='\t', header=None, engine='python'),
-        lambda: pd.read_csv(io.StringIO(bytes_data.decode('latin-1')), sep=';', header=None, engine='python')
-    ]
+    # 1. Tentar Excel Padrão (XLSX/XLS)
+    try:
+        uploaded_file.seek(0)
+        return pd.read_excel(uploaded_file, header=None)
+    except:
+        pass
+        
+    # 2. Tentar Excel Antigo (xlrd)
+    try:
+        uploaded_file.seek(0)
+        return pd.read_excel(uploaded_file, header=None, engine='xlrd')
+    except:
+        pass
 
-    for tentativa in estrategias:
+    # 3. Tentar HTML ou Texto (Detectando encoding)
+    for encoding in ['utf-8', 'latin-1', 'cp1252']:
         try:
-            uploaded_file.seek(0) # Reinicia o arquivo para a próxima tentativa
-            df = tentativa()
-            if df is not None and not df.empty and df.shape[1] > 5: # Verifica se leu algo útil
-                return df
-        except Exception:
+            text = bytes_data.decode(encoding)
+            # Tenta ler como HTML
+            try:
+                dfs = pd.read_html(io.StringIO(text), header=None)
+                if dfs: return dfs[0]
+            except:
+                pass
+            
+            # Tenta ler como CSV/TXT (Tabulação)
+            try:
+                df = pd.read_csv(io.StringIO(text), sep='\t', header=None, engine='python')
+                if df.shape[1] > 1: return df
+            except:
+                pass
+                
+            # Tenta ler como CSV/TXT (Ponto e Vírgula)
+            try:
+                df = pd.read_csv(io.StringIO(text), sep=';', header=None, engine='python')
+                if df.shape[1] > 1: return df
+            except:
+                pass
+        except:
             continue
-    
+            
     return None
 
-def formatar_excel(df):
-    """Gera o arquivo Excel final com formatação profissional."""
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, header=False, sheet_name='Relatorio')
-        workbook = writer.book
-        worksheet = writer.sheets['Relatorio']
-        
-        # Formatos
-        fmt_moeda = workbook.add_format({'num_format': 'R$ #,##0.00', 'border': 1})
-        fmt_geral = workbook.add_format({'border': 1})
-        fmt_data = workbook.add_format({'num_format': 'dd/mm/yyyy hh:mm', 'border': 1})
-        
-        # Aplica bordas em tudo
-        if len(df) > 0:
-            worksheet.conditional_format(0, 0, len(df)-1, len(df.columns)-1, 
-                                        {'type': 'no_blanks', 'format': fmt_geral})
-        
-        # Ajuste de larguras (estimativa)
-        worksheet.set_column(0, 50, 15) 
-        
-        # Tenta formatar a coluna de valor (agora índice 5 / F) se existir
-        if len(df.columns) > 5:
-            worksheet.set_column(5, 5, 18, fmt_moeda)
+def get_col_letter(n):
+    """Converte índice 0 em letra A, 1 em B..."""
+    try:
+        return string.ascii_uppercase[n]
+    except:
+        return "?"
 
-    return output.getvalue()
-
-# --- INTERFACE DO USUÁRIO ---
-
-st.title("🚀 Processador de Cargas Inteligente")
-st.markdown("""
-Esta ferramenta processa relatórios de cargas aplicando as regras de negócio:
-* **Horário:** 17:00 (Dia X) até 07:00 (Dia X+1)
-* **Status:** Silver, Gold, Diamond (com exceção de MG+Silver)
-* **Local:** CD Pouso Alegre / HPC
-""")
-
-# --- BARRA LATERAL (CONFIGURAÇÕES) ---
+# --- BARRA LATERAL ---
 with st.sidebar:
     st.header("⚙️ Configurações")
     
     st.subheader("1. Data do Plantão")
-    # Padrão para hoje, mas permite mudar
     data_ref = st.date_input("Data de Início", datetime.now().date())
     
+    st.divider()
+    
     st.subheader("2. Mapeamento de Colunas")
-    st.info("Ajuste aqui se a planilha mudar de layout.")
-    # Índices baseados no VBA original (0 = A, 1 = B...)
-    idx_data = st.number_input("Índice Coluna DATA (L)", value=11, min_value=0)
-    idx_local = st.number_input("Índice Coluna LOCAL (E)", value=4, min_value=0)
-    idx_uf = st.number_input("Índice Coluna UF (I)", value=8, min_value=0)
-    idx_transp = st.number_input("Índice Coluna TRANSP. (K)", value=10, min_value=0)
-    idx_status = st.number_input("Índice Coluna STATUS (P)", value=15, min_value=0)
+    st.info("Use o 'Visualizador' na tela principal para confirmar os números.")
+    idx_data = st.number_input("Índice Coluna DATA (Ex: 11=L)", value=11, min_value=0)
+    idx_local = st.number_input("Índice Coluna LOCAL (Ex: 4=E)", value=4, min_value=0)
+    idx_uf = st.number_input("Índice Coluna UF (Ex: 8=I)", value=8, min_value=0)
+    idx_transp = st.number_input("Índice Coluna TRANSP (Ex: 10=K)", value=10, min_value=0)
+    idx_status = st.number_input("Índice Coluna STATUS (Ex: 15=P)", value=15, min_value=0)
 
 # --- CORPO PRINCIPAL ---
+st.title("🚀 Processador de Cargas Pro")
 
-uploaded_file = st.file_uploader("Arraste seu arquivo aqui (Excel, HTML, CSV)", type=["xls", "xlsx", "xlsm", "csv", "txt"])
+uploaded_file = st.file_uploader("Arraste seu arquivo aqui", type=["xls", "xlsx", "xlsm", "csv", "txt"])
 
 if uploaded_file:
-    with st.spinner("Lendo e analisando arquivo..."):
-        df_raw = carregar_dados_blindado(uploaded_file)
+    df_raw = carregar_dados_blindado(uploaded_file)
 
     if df_raw is None:
-        st.error("❌ Não foi possível ler o arquivo. O formato é irreconhecível.")
+        st.error("❌ Formato de arquivo desconhecido.")
     else:
-        # --- ANÁLISE INICIAL ---
-        st.write("---")
-        col_metric1, col_metric2, col_metric3 = st.columns(3)
-        col_metric1.metric("Linhas Importadas", len(df_raw))
-        
-        # Tratamento de Data (O mais crítico)
-        try:
-            # dayfirst=True é essencial para DD/MM/AAAA
-            df_raw[idx_data] = pd.to_datetime(df_raw[idx_data], dayfirst=True, errors='coerce')
+        # --- FERRAMENTA VISUAL DE MAPEAMENTO ---
+        with st.expander("🕵️‍♀️ Visualizador de Colunas (Use isso para configurar a lateral)", expanded=True):
+            st.write("Confira abaixo qual número corresponde à sua coluna:")
             
-            # Remove linhas onde data é NaT (cabeçalhos repetidos ou lixo)
+            # Cria uma tabelinha de prévia transposta para facilitar leitura
+            preview = df_raw.head(3).T
+            preview.columns = [f"Linha {i+1}" for i in range(3)]
+            preview.insert(0, "Índice (Python)", preview.index)
+            
+            # Adiciona Letra do Excel (A, B, C...)
+            preview.insert(1, "Letra Excel", [get_col_letter(i) for i in preview.index])
+            
+            st.dataframe(preview, use_container_width=True, height=300)
+
+        # --- PROCESSAMENTO ---
+        st.divider()
+        
+        # Tratamento de Data
+        try:
+            df_raw[idx_data] = pd.to_datetime(df_raw[idx_data], dayfirst=True, errors='coerce')
             df_limpo = df_raw.dropna(subset=[idx_data]).copy()
             
-            # Mostra datas encontradas para conferência
+            # Métricas
             min_dt = df_limpo[idx_data].min()
             max_dt = df_limpo[idx_data].max()
-            col_metric2.metric("Menor Data Encontrada", f"{min_dt.day}/{min_dt.month} {min_dt.hour}h")
-            col_metric3.metric("Maior Data Encontrada", f"{max_dt.day}/{max_dt.month} {max_dt.hour}h")
             
+            col1, col2 = st.columns(2)
+            if pd.isna(min_dt):
+                col1.error("⚠️ Nenhuma data válida encontrada na coluna selecionada.")
+            else:
+                col1.success(f"📅 Datas encontradas de: {min_dt.strftime('%d/%m %H:%M')}")
+                col2.success(f"Até: {max_dt.strftime('%d/%m %H:%M')}")
+
         except Exception as e:
-            st.error(f"Erro ao processar datas na coluna {idx_data}. Verifique o Mapeamento na barra lateral.")
+            st.error(f"Erro na coluna de data: {e}")
             st.stop()
 
-        # --- APLICAÇÃO DOS FILTROS (PIPELINE) ---
-        
-        # Definição do Range de Horário
+        # Filtros
         inicio = datetime.combine(data_ref, time(17, 0))
         fim = datetime.combine(data_ref + timedelta(days=1), time(7, 0))
         
-        st.info(f"🔎 Filtrando período: **{inicio}** até **{fim}**")
-
-        # Filtro 1: Data
+        # 1. Data
         mask_data = (df_limpo[idx_data] >= inicio) & (df_limpo[idx_data] <= fim)
         df_f1 = df_limpo[mask_data]
         
-        # Filtro 2: Local
+        # 2. Local
         locais = ["CD POUSO ALEGRE", "POUSO ALEGRE HPC"]
         mask_local = df_f1[idx_local].astype(str).str.strip().str.upper().isin(locais)
         df_f2 = df_f1[mask_local]
         
-        # Filtro 3: Status
+        # 3. Status
         status_ok = ["SILVER", "GOLD", "DIAMOND"]
         mask_status = df_f2[idx_status].astype(str).str.strip().str.upper().isin(status_ok)
         df_f3 = df_f2[mask_status]
         
-        # Filtro 4: Regra MG + Silver (Remove se for MG E Silver)
-        # Atenção: A lógica do usuário era "Excluir Silver de MG".
-        # Então mantemos se NÃO FOR (MG E SILVER).
+        # 4. Regra MG
         uf_str = df_f3[idx_uf].astype(str).str.strip().str.upper()
         st_str = df_f3[idx_status].astype(str).str.strip().str.upper()
         mask_mg = ~((uf_str == "MG") & (st_str == "SILVER"))
         df_f4 = df_f3[mask_mg]
         
-        # Filtro 5: Transportadoras
+        # 5. Transp
         transp_block = ["JSL S A", "TRANSANTA RITA LTDA", "T G LOGISTICA E TRANSPORTES LTDA", "TRANSANTA RITA TRANSPORTES LTDA"]
         mask_transp = ~df_f4[idx_transp].astype(str).str.strip().str.upper().isin(transp_block)
-        df_final_raw = df_f4[mask_transp]
+        df_final = df_f4[mask_transp]
 
-        # --- EXIBIÇÃO DO FUNIL DE DADOS ---
-        st.write("### 📉 Funil de Processamento")
-        col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
-        col_f1.metric("Após Data", len(df_f1), delta=len(df_f1)-len(df_limpo))
-        col_f2.metric("Após Local", len(df_f2), delta=len(df_f2)-len(df_f1))
-        col_f3.metric("Após Status", len(df_f3), delta=len(df_f3)-len(df_f2))
-        col_f4.metric("Regra MG", len(df_f4), delta=len(df_f4)-len(df_f3))
-        col_f5.metric("Final", len(df_final_raw), delta=len(df_final_raw)-len(df_f4))
+        # Funil
+        st.write("### 📉 Funil")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("1. Data", len(df_f1))
+        c2.metric("2. Local", len(df_f2))
+        c3.metric("3. Status", len(df_f3))
+        c4.metric("4. MG", len(df_f4))
+        c5.metric("5. Transp (Final)", len(df_final))
 
-        if len(df_final_raw) == 0:
-            st.warning("⚠️ O resultado está vazio. Verifique se a 'Data de Início' na barra lateral corresponde às datas do arquivo.")
-        else:
-            st.success(f"✅ Processamento concluído! {len(df_final_raw)} linhas prontas para download.")
-
-            # --- PREPARAÇÃO FINAL (REMOÇÃO DE COLUNAS) ---
-            # VBA Remove: V(21), U(20)... A(0)
-            # Vamos remover pelo indice para garantir
+        if len(df_final) > 0:
+            # Exportação
             cols_to_drop = [21, 20, 19, 18, 17, 16, 13, 12, 9, 6, 5, 4, 3, 2, 0]
-            # Filtra apenas as que existem (segurança)
-            cols_existentes = [c for c in cols_to_drop if c in df_final_raw.columns]
-            df_export = df_final_raw.drop(columns=cols_existentes)
+            cols_existentes = [c for c in cols_to_drop if c in df_final.columns]
+            df_export = df_final.drop(columns=cols_existentes)
             
-            # Botão de Download
-            arquivo_excel = formatar_excel(df_export)
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_export.to_excel(writer, index=False, header=False, sheet_name='Sheet1')
+                wb = writer.book
+                ws = writer.sheets['Sheet1']
+                fmt_moeda = wb.add_format({'num_format': 'R$ #,##0.00', 'border': 1})
+                fmt_geral = wb.add_format({'border': 1})
+                
+                ws.conditional_format(0, 0, len(df_export)-1, len(df_export.columns)-1, 
+                                    {'type': 'no_blanks', 'format': fmt_geral})
+                
+                if len(df_export.columns) > 5:
+                    ws.set_column(5, 5, 15, fmt_moeda)
             
-            st.download_button(
-                label="📥 Baixar Planilha Processada",
-                data=arquivo_excel,
-                file_name=f"Cargas_Filtradas_{data_ref}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="primary"
-            )
-            
-            with st.expander("🔍 Ver Prévia dos Dados Finais"):
-                st.dataframe(df_export.head(10))
+            st.download_button("📥 Baixar Planilha", output.getvalue(), "Cargas_Filtradas.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
+        else:
+            st.warning("Nenhum dado sobrou após os filtros.")
