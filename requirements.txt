@@ -4,5 +4,5 @@ openpyxl
 xlsxwriter
 xlrd
 lxml
-html5lib
 beautifulsoup4
+html5lib
