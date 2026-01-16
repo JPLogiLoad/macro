@@ -1,3 +1,8 @@
 streamlit
 pandas
-plotly
+openpyxl
+xlsxwriter
+xlrd
+lxml
+beautifulsoup4
+html5lib
