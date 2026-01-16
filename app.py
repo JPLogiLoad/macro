@@ -77,7 +77,7 @@ with st.sidebar:
     idx_status = st.number_input("STATUS (P=16)", value=16, min_value=1, help="Coluna P é a 16ª")
 
 # --- CORPO PRINCIPAL ---
-st.title("🚀 Processador de Cargas Pro")
+st.title("🚀 Processador de Cargas Critérios")
 
 uploaded_file = st.file_uploader("Arraste seu arquivo aqui", type=["xls", "xlsx", "xlsm", "csv", "txt"])
 
