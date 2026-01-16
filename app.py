@@ -5,7 +5,7 @@ import string
 from datetime import datetime, timedelta, time
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Processador de Cargas Pro", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Processador de Cargas Critérios", page_icon="🚀", layout="wide")
 
 # --- FUNÇÕES ---
 
