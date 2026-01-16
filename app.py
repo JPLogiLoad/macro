@@ -70,11 +70,11 @@ with st.sidebar:
     
     st.subheader("2. Mapeamento de Colunas (A=1)")
     # Valores ajustados para usar contagem humana (1, 2, 3...)
-    idx_data = st.number_input("DATA (L=12)", value=10, min_value=1, help="Coluna L é a 12ª")
-    idx_local = st.number_input("LOCAL (E=5)", value=4, min_value=1, help="Coluna E é a 5ª")
-    idx_uf = st.number_input("UF (I=9)", value=8, min_value=1, help="Coluna I é a 9ª")
-    idx_transp = st.number_input("TRANSP (K=11)", value=9, min_value=1, help="Coluna K é a 11ª")
-    idx_status = st.number_input("STATUS (P=16)", value=14, min_value=1, help="Coluna P é a 16ª")
+    idx_data = st.number_input("DATA (L=12)", value=12, min_value=1, help="Coluna L é a 12ª")
+    idx_local = st.number_input("LOCAL (E=5)", value=5, min_value=1, help="Coluna E é a 5ª")
+    idx_uf = st.number_input("UF (I=9)", value=9, min_value=1, help="Coluna I é a 9ª")
+    idx_transp = st.number_input("TRANSP (K=11)", value=11, min_value=1, help="Coluna K é a 11ª")
+    idx_status = st.number_input("STATUS (P=16)", value=16, min_value=1, help="Coluna P é a 16ª")
 
 # --- CORPO PRINCIPAL ---
 st.title("🚀 Processador de Cargas Critérios")
